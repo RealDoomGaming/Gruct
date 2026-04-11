@@ -51,6 +51,12 @@ fn handle_connection(mut stream: TcpStream) -> Result<(), Box<dyn Error>> {
         .chars()
         .take_while(|&char| char != '/')
         .collect::<String>();
+
+    let path = request_line
+        .split_whitespace()
+        .nth(1)
+        .unwrap();
+    println!("{path}");
     
     if method == "GET" {
         // Getting a repo
