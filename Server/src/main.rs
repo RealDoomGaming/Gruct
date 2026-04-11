@@ -5,6 +5,11 @@ use std::{
     error::Error,
 };
 
+mod constants {
+    const REPOS_DIR: &str = "/var/lib/gruct-repos";
+    const _LOGS_DIR: &str = "/var/log/gruct-logs";
+}
+
 fn main() {
     let listener = TcpListener::bind("127.0.0.1:8080").unwrap();
 
@@ -12,9 +17,9 @@ fn main() {
         let stream = stream.unwrap();
         
         match handle_connection(stream) {
-            Ok(resp) => {
+            Ok(_resp) => {
             }
-            Err(e) => {
+            Err(_e) => {
             }
         }
     }    
@@ -28,7 +33,20 @@ fn handle_connection(mut stream: TcpStream) -> Result<(), Box<dyn Error>> {
         .next()
         .unwrap()
         .unwrap(); 
+
+    let method = request_line
+        .chars()
+        .take_while(|&char| char != '/')
+        .collect::<String>();
     
+    if method == "GET" {
+        // Getting a repo
+    } else if method == "PUT" {
+        // Pushing a file to a specific repo
+    } else if method == "POST" {
+        // Making a new dir/repo
+    }
+
     let status_line = "HTTP/1.1 200 OK";
     let content = "Hellos :D";
     let con_length = content.len();
