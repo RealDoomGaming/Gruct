@@ -56,7 +56,14 @@ fn handle_connection(mut stream: TcpStream) -> Result<(), Box<dyn Error>> {
         .split_whitespace()
         .nth(1)
         .unwrap();
-    println!("{path}");
+    let query = path
+        .splitn(2, '?')
+        .nth(1)
+        .unwrap_or("");
+    let params: Vec<(&str, &str)> = query
+        .split('&')
+        .filter_map(|pair| pair.split_once("="))
+        .collect();
     
     if method == "GET" {
         // Getting a repo
