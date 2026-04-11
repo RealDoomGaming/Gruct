@@ -58,3 +58,15 @@ fn handle_connection(mut stream: TcpStream) -> Result<(), Box<dyn Error>> {
 
     Ok(())
 }
+
+fn handle_get() {
+
+}
+
+fn handle_put() {
+
+}
+
+fn handle_post() {
+
+}
