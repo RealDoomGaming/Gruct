@@ -3,15 +3,28 @@ use std::{
     io::{BufReader, prelude::*},
     net::{TcpListener, TcpStream},
     error::Error,
+    path::{PathBuf, Path},
+    fs,
 };
 
-mod constants {
-    const REPOS_DIR: &str = "/var/lib/gruct-repos";
-    const _LOGS_DIR: &str = "/var/log/gruct-logs";
-}
+// constants
+const REPOS_DIR: &str = "/var/lib/gruct-repos";
+const _LOGS_DIR: &str = "/var/log/gruct-logs";
+// end
 
 fn main() {
     let listener = TcpListener::bind("127.0.0.1:8080").unwrap();
+
+    if !(Path::new(REPOS_DIR).exists()) {
+        match fs::create_dir(REPOS_DIR) {
+            Ok(()) => {}
+            Err(e) => {
+                Err::<(), &str>("Failed to create repos dir when starting up for the first time,
+                    maybe try starting with sudo or create it yourself\n Actuall error: {e}");
+            }
+        }
+    } 
+    // do the same with logs later
 
     for stream in listener.incoming() {
         let stream = stream.unwrap();
@@ -41,10 +54,13 @@ fn handle_connection(mut stream: TcpStream) -> Result<(), Box<dyn Error>> {
     
     if method == "GET" {
         // Getting a repo
+        handle_get();
     } else if method == "PUT" {
         // Pushing a file to a specific repo
+        handle_put();
     } else if method == "POST" {
         // Making a new dir/repo
+        handle_post();
     }
 
     let status_line = "HTTP/1.1 200 OK";
@@ -60,7 +76,7 @@ fn handle_connection(mut stream: TcpStream) -> Result<(), Box<dyn Error>> {
 }
 
 fn handle_get() {
-
+    
 }
 
 fn handle_put() {
