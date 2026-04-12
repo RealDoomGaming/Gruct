@@ -90,7 +90,7 @@ fn handle_connection(mut stream: TcpStream) -> Result<(), Box<dyn Error>> {
                 .nth(1)
                 .unwrap_or("");
         
-            handle_update_file(body, &stream, params, file_name);
+            handle_update_file(body, file_name, &stream, params,);
         }
     } else if method == "POST" {
         // Making a new dir/repo
@@ -118,7 +118,58 @@ fn handle_get() {
 }
 
 fn handle_update_file(file_contents: &str, file_name: &str, stream: &TcpStream, params: Vec<(&str, &str)>) {
+   let mut message = "";
+
+    if file_name == "" {
+        message = "Couldnt get a file name (might be a server error)";
+        send_back(message, stream, 404);
+        return;
+    }
+
+    if params.is_empty() {
+        message = "Couldnt get the repo/dir name to which to push to";
+        send_back(message, stream, 404);
+        return;
+    }
+
+
+    let (name_key, name_value) = params.get(0).unwrap();
+
+    if *name_key != "where" {
+        message = "Couldnt get the repo/dir name to which to push to";
+        send_back(message, stream, 404);
+        return;
+    }
+
+    if !(Path::new(&(REPOS_DIR.to_owned() + "/" + name_value)).exists()) {
+       message = "Dir/Repo with that name doesnt exist, create it before pushing";  
+       send_back(message, stream, 404);
+       return;
+    } 
     
+    // if no check failed then we update/create the file 
+    if !(Path::new(&(REPOS_DIR.to_owned() + "/" + name_value + "/" + file_name)).exists()) {
+        // if file exists update
+        let mut file = fs::OpenOptions::new()
+            .write(true)
+            .truncate(true)
+            .open(&(REPOS_DIR.to_owned() + "/" + name_value + "/" + file_name));
+
+        file.as_mut()
+            .expect("Failed to write to file")
+            .write_all(file_contents.as_bytes());
+
+        file.as_mut()
+            .expect("Failed to flush file")
+            .flush();
+
+        message = "Sucessfully updated existing file";
+        send_back(message, stream, 200);
+        return;
+    } else {
+        // if file doesnt exist create it
+
+    }
 }
 
 fn handle_create_dir(params: Vec<(&str, &str)>, stream: &TcpStream) {
