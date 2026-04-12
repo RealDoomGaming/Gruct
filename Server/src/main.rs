@@ -48,14 +48,18 @@ fn handle_connection(mut stream: TcpStream) -> Result<(), Box<dyn Error>> {
         .unwrap(); 
 
     let method = request_line
-        .chars()
-        .take_while(|&char| char != '/')
-        .collect::<String>();
+        .split_whitespace()
+        .next()
+        .unwrap_or("");
 
     let path = request_line
         .split_whitespace()
         .nth(1)
         .unwrap();
+    let path_without_query = path
+        .splitn(2, '?')
+        .nth(0)
+        .unwrap_or("");
     let query = path
         .splitn(2, '?')
         .nth(1)
@@ -64,6 +68,11 @@ fn handle_connection(mut stream: TcpStream) -> Result<(), Box<dyn Error>> {
         .split('&')
         .filter_map(|pair| pair.split_once("="))
         .collect();
+
+    let body = request_line
+        .splitn(2, "\r\n\r\n")
+        .nth(1)
+        .unwrap_or("");
     
     if method == "GET" {
         // Getting a repo
@@ -73,9 +82,12 @@ fn handle_connection(mut stream: TcpStream) -> Result<(), Box<dyn Error>> {
         handle_put();
     } else if method == "POST" {
         // Making a new dir/repo
-        handle_post();
+        if path_without_query == "/repo/new" {
+            handle_create_dir(params, &stream);
+        }
     }
 
+    /*
     let status_line = "HTTP/1.1 200 OK";
     let content = "Hellos :D";
     let con_length = content.len();
@@ -84,6 +96,7 @@ fn handle_connection(mut stream: TcpStream) -> Result<(), Box<dyn Error>> {
         format!("{status_line}\r\nContent-Length: {con_length}\r\n\r\n{content}");
     
     stream.write_all(response.as_bytes())?;
+    */
 
     Ok(())
 }
@@ -96,6 +109,67 @@ fn handle_put() {
 
 }
 
-fn handle_post() {
+fn handle_create_dir(params: Vec<(&str, &str)>, stream: &TcpStream) {
+    let mut message = "";
 
+    if params.is_empty() {
+        message = "Couldnt get the name the new dir/repo"; 
+        send_back(message, stream, 404);
+        return;
+    } 
+
+
+    let (name_key, name_value) = params.get(0).unwrap();
+
+    if *name_key == "name" {
+        println!("Got a name");
+        // check if the actual name is just empty
+        if *name_value == "" {
+            message = "No dir/repo name given";
+            send_back(message, stream, 404);
+            return;
+        }
+
+        // check if dir already exists
+        if Path::new(&(REPOS_DIR.to_owned() + "/" + name_value)).exists() {
+            message = "Dir/Repo with the same name already exists";
+            send_back(message, stream, 404);
+            return;
+        }
+
+        // after checking if everything is valid we cna create it
+        match fs::create_dir(&(REPOS_DIR.to_owned() + "/" + name_value)) {
+            Ok(()) => {
+                message = "Succesfully created new dir/repo";
+                send_back(message, stream, 201);
+            }
+            Err(e) => {
+               println!("Error when creating new dir/repo: {e}") ;
+
+               message = "Internal Server Error";
+               send_back(message, stream, 500);
+            }
+        }
+    } else {
+        // send back 404 instantly
+        message = "Couldnt get the name the new dir/repo"; 
+        send_back(message, stream, 404);
+        return;
+    }
+}
+
+fn send_back(message: &str, mut stream: &TcpStream, status_code: i32) {
+    let message_len = message.len();
+
+    let status_text = match status_code {
+        200 => "OK",
+        201 => "Created",
+        404 => "Not Found",
+        500 => "Internal Server Error",
+        _ => "Unknown",
+    };
+
+    let resp = format!("HTTP/1.1 {status_code} {status_text}\r\nContent-Length: {message_len}\r\n\r\n{message}");
+
+    stream.write_all(resp.as_bytes()).expect("Failed to Write to client");
 }
