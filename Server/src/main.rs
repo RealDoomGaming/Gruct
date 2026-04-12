@@ -79,7 +79,19 @@ fn handle_connection(mut stream: TcpStream) -> Result<(), Box<dyn Error>> {
         handle_get();
     } else if method == "PUT" {
         // Pushing a file to a specific repo
-        handle_put();
+        let path_without_filename = path
+            .splitn(2, '/')
+            .nth(0)
+            .unwrap_or("");
+
+        if path_without_filename == "/update" {
+            let file_name = path
+                .splitn(2, '/')
+                .nth(1)
+                .unwrap_or("");
+        
+            handle_update_file(body, &stream, params, file_name);
+        }
     } else if method == "POST" {
         // Making a new dir/repo
         if path_without_query == "/repo/new" {
@@ -105,8 +117,8 @@ fn handle_get() {
     
 }
 
-fn handle_put() {
-
+fn handle_update_file(file_contents: &str, file_name: &str, stream: &TcpStream, params: Vec<(&str, &str)>) {
+    
 }
 
 fn handle_create_dir(params: Vec<(&str, &str)>, stream: &TcpStream) {
