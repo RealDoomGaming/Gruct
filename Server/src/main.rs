@@ -3,7 +3,7 @@ use std::{
     io::{BufReader, prelude::*},
     net::{TcpListener, TcpStream},
     error::Error,
-    path::{PathBuf, Path},
+    path::{Path},
     fs,
 };
 
@@ -18,9 +18,9 @@ fn main() {
     if !(Path::new(REPOS_DIR).exists()) {
         match fs::create_dir(REPOS_DIR) {
             Ok(()) => {}
-            Err(e) => {
-                Err::<(), &str>("Failed to create repos dir when starting up for the first time,
-                    maybe try starting with sudo or create it yourself\n Actuall error: {e}");
+            Err(_e) => {
+                panic!("Failed to create the repos folder when starting the server for the fist time, 
+                    if this problem persists either create the folder yourself or run this with sudo");
             }
         }
     } 
@@ -38,7 +38,7 @@ fn main() {
     }    
 }
 
-fn handle_connection(mut stream: TcpStream) -> Result<(), Box<dyn Error>> {
+fn handle_connection(stream: TcpStream) -> Result<(), Box<dyn Error>> {
     // stream is mutable -> we can change it
     let buff_reader = BufReader::new(&stream);
     let request_line = buff_reader
@@ -89,13 +89,21 @@ fn handle_connection(mut stream: TcpStream) -> Result<(), Box<dyn Error>> {
                 .splitn(2, '/')
                 .nth(1)
                 .unwrap_or("");
-        
-            handle_update_file(body, file_name, &stream, params,);
+            
+            if let Err(_e) = handle_update_file(body, file_name, &stream, params) {
+                let message = "Failed to write to file";
+                send_back(message, &stream, 404);
+                return Ok(());
+            }
         }
     } else if method == "POST" {
         // Making a new dir/repo
         if path_without_query == "/repo/new" {
-            handle_create_dir(params, &stream);
+           if let Err(_e) = handle_create_dir(params, &stream) {
+                let message = "Failed to create dir/repo";
+                send_back(message, &stream, 404);
+                return Ok(());
+           }
         }
     }
 
@@ -117,19 +125,19 @@ fn handle_get() {
     
 }
 
-fn handle_update_file(file_contents: &str, file_name: &str, stream: &TcpStream, params: Vec<(&str, &str)>) {
+fn handle_update_file(file_contents: &str, file_name: &str, stream: &TcpStream, params: Vec<(&str, &str)>) -> Result<(), Box<dyn Error>> {
    let mut message = "";
 
     if file_name == "" {
         message = "Couldnt get a file name (might be a server error)";
         send_back(message, stream, 404);
-        return;
+        return Ok(());
     }
 
     if params.is_empty() {
         message = "Couldnt get the repo/dir name to which to push to";
         send_back(message, stream, 404);
-        return;
+        return Ok(());
     }
 
 
@@ -138,47 +146,52 @@ fn handle_update_file(file_contents: &str, file_name: &str, stream: &TcpStream, 
     if *name_key != "where" {
         message = "Couldnt get the repo/dir name to which to push to";
         send_back(message, stream, 404);
-        return;
+        return Ok(());
     }
 
     if !(Path::new(&(REPOS_DIR.to_owned() + "/" + name_value)).exists()) {
        message = "Dir/Repo with that name doesnt exist, create it before pushing";  
        send_back(message, stream, 404);
-       return;
+       return Ok(());
     } 
     
+    let file_path = &(REPOS_DIR.to_owned() + "/" + name_value + "/" + file_name);
     // if no check failed then we update/create the file 
-    if !(Path::new(&(REPOS_DIR.to_owned() + "/" + name_value + "/" + file_name)).exists()) {
+    if !(Path::new(file_path).exists()) {
         // if file exists update
         let mut file = fs::OpenOptions::new()
             .write(true)
             .truncate(true)
-            .open(&(REPOS_DIR.to_owned() + "/" + name_value + "/" + file_name));
+            .open(file_path)?;
 
-        file.as_mut()
-            .expect("Failed to write to file")
-            .write_all(file_contents.as_bytes());
+        file.write_all(file_contents.as_bytes())?;
 
-        file.as_mut()
-            .expect("Failed to flush file")
-            .flush();
+        file.flush()?;
 
         message = "Sucessfully updated existing file";
         send_back(message, stream, 200);
-        return;
+        return Ok(());
     } else {
         // if file doesnt exist create it
+        let mut file = fs::File::create(file_path)?;
 
+        file.write_all(file_contents.as_bytes())?;
+
+        file.flush()?;
+
+        message = "Sucessfully created new file and wrote to it";
+        send_back(message, stream, 201);
+        return Ok(());
     }
 }
 
-fn handle_create_dir(params: Vec<(&str, &str)>, stream: &TcpStream) {
+fn handle_create_dir(params: Vec<(&str, &str)>, stream: &TcpStream) -> Result<(), Box<dyn Error>> {
     let mut message = "";
 
     if params.is_empty() {
         message = "Couldnt get the name the new dir/repo"; 
         send_back(message, stream, 404);
-        return;
+        return Ok(());
     } 
 
 
@@ -190,14 +203,14 @@ fn handle_create_dir(params: Vec<(&str, &str)>, stream: &TcpStream) {
         if *name_value == "" {
             message = "No dir/repo name given";
             send_back(message, stream, 404);
-            return;
+            return Ok(());
         }
 
         // check if dir already exists
         if Path::new(&(REPOS_DIR.to_owned() + "/" + name_value)).exists() {
             message = "Dir/Repo with the same name already exists";
             send_back(message, stream, 404);
-            return;
+            return Ok(());
         }
 
         // after checking if everything is valid we cna create it
@@ -205,19 +218,21 @@ fn handle_create_dir(params: Vec<(&str, &str)>, stream: &TcpStream) {
             Ok(()) => {
                 message = "Succesfully created new dir/repo";
                 send_back(message, stream, 201);
+                return Ok(());
             }
             Err(e) => {
                println!("Error when creating new dir/repo: {e}") ;
 
                message = "Internal Server Error";
                send_back(message, stream, 500);
+               return Ok(());
             }
         }
     } else {
         // send back 404 instantly
         message = "Couldnt get the name the new dir/repo"; 
         send_back(message, stream, 404);
-        return;
+        return Ok(());
     }
 }
 
