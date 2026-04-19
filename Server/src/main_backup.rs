@@ -39,11 +39,13 @@ fn main() {
 }
 
 fn handle_connection(stream: TcpStream) -> Result<(), Box<dyn Error>> {
-    let mut buff_reader = BufReader::new(&stream);
-    let mut request_line = String::new();
-    buff_reader.read_line(&mut request_line)?;
-    let request_line = request_line.trim_end();
-        
+    // stream is mutable -> we can change it
+    let buff_reader = BufReader::new(&stream);
+    let request_line = buff_reader
+        .lines()
+        .next()
+        .unwrap()
+        .unwrap(); 
 
     let method = request_line
         .split_whitespace()
@@ -53,7 +55,7 @@ fn handle_connection(stream: TcpStream) -> Result<(), Box<dyn Error>> {
     let path = request_line
         .split_whitespace()
         .nth(1)
-        .unwrap_or("/");
+        .unwrap();
     let path_without_query = path
         .splitn(2, '?')
         .nth(0)
@@ -67,51 +69,28 @@ fn handle_connection(stream: TcpStream) -> Result<(), Box<dyn Error>> {
         .filter_map(|pair| pair.split_once("="))
         .collect();
 
-    // read the headers line by line until we get to a blank line
-    let mut body_length = 0;
-
-    loop {
-        let mut line = String::new();
-        buff_reader.read_line(&mut line)?;
-        let line = line.trim_end();
-
-        if line.is_empty() {
-            break; // blank line -> end of header
-        }
-
-        if let Some(val) = line.to_lowercase().strip_prefix("content-length:") {
-            body_length = val.trim().parse().unwrap_or(0);
-        }
-    }
-
-    // read exact body length bytes for the body
-    let mut body_bytes = vec![0u8; body_length];
-    if body_length > 0 {
-        buff_reader.read_exact(&mut body_bytes)?;
-    }
-
-    // finally the actual body
-    let body = String::from_utf8_lossy(&body_bytes);
-
+    let body = request_line
+        .splitn(2, "\r\n\r\n")
+        .nth(1)
+        .unwrap_or("");
+    
     if method == "GET" {
         // Getting a repo
         handle_get();
     } else if method == "PUT" {
         // Pushing a file to a specific repo
         let path_without_filename = path
-            .splitn(3, '/')
-            .nth(1)
+            .splitn(2, '/')
+            .nth(0)
             .unwrap_or("");
-        let segments: Vec<&str> = path_without_query
-            .splitn(3, '/')
-            .collect();
 
-        if segments.get(1) == Some(&"update") {
-            let file_name = segments
-                .get(2)
-                .unwrap_or(&"");
+        if path_without_filename == "/update" {
+            let file_name = path
+                .splitn(2, '/')
+                .nth(1)
+                .unwrap_or("");
             
-            if let Err(_e) = handle_update_file(body.as_ref(), file_name, &stream, params) {
+            if let Err(_e) = handle_update_file(body, file_name, &stream, params) {
                 let message = "Failed to write to file";
                 send_back(message, &stream, 404);
                 return Ok(());
@@ -150,14 +129,12 @@ fn handle_update_file(file_contents: &str, file_name: &str, stream: &TcpStream, 
    let mut message = "";
 
     if file_name == "" {
-        eprintln!("[update] missing file name");
         message = "Couldnt get a file name (might be a server error)";
         send_back(message, stream, 404);
         return Ok(());
     }
 
     if params.is_empty() {
-        eprintln!("[update] no params");
         message = "Couldnt get the repo/dir name to which to push to";
         send_back(message, stream, 404);
         return Ok(());
@@ -167,24 +144,20 @@ fn handle_update_file(file_contents: &str, file_name: &str, stream: &TcpStream, 
     let (name_key, name_value) = params.get(0).unwrap();
 
     if *name_key != "where" {
-        eprintln!("[update] wrong param key: {name_key}");
         message = "Couldnt get the repo/dir name to which to push to";
         send_back(message, stream, 404);
         return Ok(());
     }
 
-    let repo_path = format!("{REPOS_DIR}/{name_value}");
-
     if !(Path::new(&(REPOS_DIR.to_owned() + "/" + name_value)).exists()) {
-        eprintln!("[update] repo doesn't exist: {repo_path}");
-        message = "Dir/Repo with that name doesnt exist, create it before pushing";  
-        send_back(message, stream, 404);
-        return Ok(());
+       message = "Dir/Repo with that name doesnt exist, create it before pushing";  
+       send_back(message, stream, 404);
+       return Ok(());
     } 
     
     let file_path = &(REPOS_DIR.to_owned() + "/" + name_value + "/" + file_name);
     // if no check failed then we update/create the file 
-    if Path::new(file_path).exists() {
+    if !(Path::new(file_path).exists()) {
         // if file exists update
         let mut file = fs::OpenOptions::new()
             .write(true)
