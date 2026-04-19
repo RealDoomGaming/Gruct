@@ -6,6 +6,7 @@ use std::{
     path::{Path},
     fs,
 };
+use base64::{Engine, engine::general_purpose::STANDARD};
 
 // constants
 const REPOS_DIR: &str = "/var/lib/gruct-repos";
@@ -181,6 +182,12 @@ fn handle_update_file(file_contents: &str, file_name: &str, stream: &TcpStream, 
         send_back(message, stream, 404);
         return Ok(());
     } 
+
+    let decoded = STANDARD.decode(file_contents.trim()).map_err(|e| {
+        eprintln!("[update] base64 decode failed: {e}");
+        e
+    })?;
+
     
     let file_path = &(REPOS_DIR.to_owned() + "/" + name_value + "/" + file_name);
     // if no check failed then we update/create the file 
@@ -191,7 +198,7 @@ fn handle_update_file(file_contents: &str, file_name: &str, stream: &TcpStream, 
             .truncate(true)
             .open(file_path)?;
 
-        file.write_all(file_contents.as_bytes())?;
+        file.write_all(&decoded)?;
 
         file.flush()?;
 
@@ -202,7 +209,7 @@ fn handle_update_file(file_contents: &str, file_name: &str, stream: &TcpStream, 
         // if file doesnt exist create it
         let mut file = fs::File::create(file_path)?;
 
-        file.write_all(file_contents.as_bytes())?;
+        file.write_all(&decoded)?;
 
         file.flush()?;
 
