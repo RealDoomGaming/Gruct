@@ -2,7 +2,7 @@ use std::{
     // BufReader and prelude -> traits and types which let us read and write to stream
     io::{BufReader, prelude::*},
     net::{TcpListener, TcpStream},
-    error::Error,
+    error::{Error},
     path::{Path},
     fs,
 };
@@ -11,6 +11,25 @@ use base64::{Engine, engine::general_purpose::STANDARD};
 // constants
 const REPOS_DIR: &str = "/var/lib/gruct-repos";
 const _LOGS_DIR: &str = "/var/log/gruct-logs";
+// end
+
+// enum
+enum FileNode {
+    File(File),
+    Directory(Directory),
+}
+// end
+
+// structs
+struct File {
+    name: String,
+    content: String,
+}
+
+struct Directory {
+    name: String,
+    children: Vec<FileNode>,
+}
 // end
 
 fn main() {
@@ -169,7 +188,39 @@ fn handle_pull_repo(repo_name: &str, stream: &TcpStream) -> Result<(), Box<dyn E
         send_back(message, stream, 404);
         return Ok(());
     } 
+
+    // we need to go through the entire folder recursively
+    let folder = folder_rec(Path::new(repo_name));
+
+    message = "Sucessfully pulled the repo/dir";
+    send_back(message, stream, 200);
+    return Ok(());
 }
+
+fn folder_rec(path: &Path) -> FileNode {
+    let name = path.file_name().unwrap().to_string_lossy().to_string();
+
+    if path.is_dir() {
+        // go deeper if this path is a folder
+        let mut children = Vec::new();
+
+        for entry in fs::read_dir(path).unwrap() {
+            let entry = entry.unwrap();
+            let child = folder_rec(&entry.path());
+            
+            children.push(child);
+        }
+
+        FileNode::Directory(Directory { name, children })
+    
+    } else {
+        // read if this path is a file
+        let content = fs::read_to_string(path)
+            .unwrap_or_default();
+        FileNode::File(File { name, content })
+    }
+}
+
 
 fn handle_update_file(file_contents: &str, file_name: &str, stream: &TcpStream, params: Vec<(&str, &str)>) -> Result<(), Box<dyn Error>> {
    let mut message = "";
