@@ -96,13 +96,23 @@ fn handle_connection(stream: TcpStream) -> Result<(), Box<dyn Error>> {
 
     if method == "GET" {
         // Getting a repo
-        handle_get();
-    } else if method == "PUT" {
-        // Pushing a file to a specific repo
-        let path_without_filename = path
+        let segments: Vec<&str> = path
             .splitn(3, '/')
-            .nth(1)
-            .unwrap_or("");
+            .collect();
+
+        if segments.get(1) == Some(&"pull") {
+            let repo_name = segments
+                .get(2)
+                .unwrap_or(&"");
+
+            if let Err(_e) = handle_pull_repo(repo_name, &stream) {
+                let message = "Failed to pull the requested repo";
+                send_back(message, &stream, 404);
+                return Ok(());
+            }
+        }
+    } else if method == "PUT" {
+        // Pushing a file to a specific repo 
         let segments: Vec<&str> = path_without_query
             .splitn(3, '/')
             .collect();
@@ -143,8 +153,22 @@ fn handle_connection(stream: TcpStream) -> Result<(), Box<dyn Error>> {
     Ok(())
 }
 
-fn handle_get() {
-    
+fn handle_pull_repo(repo_name: &str, stream: &TcpStream) -> Result<(), Box<dyn Error>> {
+    let mut message = "";
+
+    if repo_name == "" {
+        eprintln!("[pull] missing repo name");
+        message = "Couldnt get the repo name";
+        send_back(message, stream, 404);
+        return Ok(());
+    }   
+
+    if !(Path::new(&(REPOS_DIR.to_owned() + "/" + repo_name)).exists()) {
+        eprintln!("[pull] repo doesn't exist: {repo_name}");
+        message = "Dir/Repo with that name doesnt exist";  
+        send_back(message, stream, 404);
+        return Ok(());
+    } 
 }
 
 fn handle_update_file(file_contents: &str, file_name: &str, stream: &TcpStream, params: Vec<(&str, &str)>) -> Result<(), Box<dyn Error>> {
