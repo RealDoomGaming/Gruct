@@ -12,7 +12,12 @@ use serde::{Serialize, Deserialize};
 // constants
 const REPOS_DIR: &str = "/var/lib/gruct-repos";
 const _LOGS_DIR: &str = "/var/log/gruct-logs";
+const GIT_KEYS_DIR: &str = "/var/lib/gruct/git-keys";
 // end
+
+fn git_keys_file() -> String {
+    format!("{}/git_keys.json", GIT_KEYS_DIR)
+}
 
 // enum
 #[derive(Serialize, Deserialize)]
@@ -33,6 +38,12 @@ struct File {
 struct Directory {
     name: String,
     children: Vec<FileNode>,
+}
+
+#[derive(Deserialize, Debug)]
+struct GitKey {
+    token: String,
+    project: Option<String>,
 }
 // end
 
@@ -130,7 +141,17 @@ fn handle_connection(stream: TcpStream) -> Result<(), Box<dyn Error>> {
 
             if let Err(_e) = handle_pull_repo(repo_name, &stream) {
                 let message = "Failed to pull the requested repo";
-                send_back(message, &stream, 404);
+                send_back(message, &stream, 500);
+                return Ok(());
+            }
+        } else if segments.get(1) == Some(&"keys") {
+            let key_name = segments
+                .get(2)
+                .unwrap_or(&"");
+
+            if let Err(_e) = handle_pull_git_keys(key_name, &stream) {
+                let message = "Failed to get the requested key";
+                send_back(message, &stream, 500);
                 return Ok(());
             }
         }
@@ -147,7 +168,7 @@ fn handle_connection(stream: TcpStream) -> Result<(), Box<dyn Error>> {
             
             if let Err(_e) = handle_update_file(body.as_ref(), file_name, &stream, params) {
                 let message = "Failed to write to file";
-                send_back(message, &stream, 404);
+                send_back(message, &stream, 500);
                 return Ok(());
             }
         }
@@ -156,7 +177,7 @@ fn handle_connection(stream: TcpStream) -> Result<(), Box<dyn Error>> {
         if path_without_query == "/repo/new" {
            if let Err(_e) = handle_create_dir(params, &stream) {
                 let message = "Failed to create dir/repo";
-                send_back(message, &stream, 404);
+                send_back(message, &stream, 500);
                 return Ok(());
            }
         }
@@ -174,6 +195,51 @@ fn handle_connection(stream: TcpStream) -> Result<(), Box<dyn Error>> {
     */
 
     Ok(())
+}
+
+fn handle_pull_git_keys(key_name: &str, stream: &TcpStream) -> Result<(), Box<dyn Error>> {
+    let mut message = "";
+
+    if key_name == "" {
+        eprintln!("[pull] missing key name");
+        message = "Couldnt get the key name";
+        send_back(message, stream, 404);
+        return Ok(());
+    }
+
+    let keys_file = git_keys_file();
+
+    let raw = std::fs::read_to_string(keys_file).expect("couldn't read file"); 
+    let keys: Vec<GitKey> = serde_json::from_str(&raw).expect("");
+
+    for key in &keys {
+        if key.project == Some((&key_name).to_string()) {
+            message = &key.token;
+            send_back_key(stream, 200, message);
+            return Ok(());
+        }
+    }
+
+    message = "Couldnt find git key with that name";
+    send_back(message, stream, 404);
+    return Ok(());
+}
+
+fn send_back_key(mut stream: &TcpStream, status_code: i32, key: &str) {
+    let message = serde_json::to_string(&key).unwrap();
+    let message_len = message.len();
+
+    let status_text = match status_code {
+        200 => "OK",
+        201 => "Created",
+        404 => "Not Found",
+        500 => "Internal Server Error",
+        _ => "Unknown",
+    };
+
+    let resp = format!("HTTP/1.1 {status_code} {status_text}\r\nContent-Length: {message_len}\r\nContent-Type: application/json\r\n\r\n{message}");
+
+    stream.write_all(resp.as_bytes()).expect("Failed to Write to client");  
 }
 
 fn handle_pull_repo(repo_name: &str, stream: &TcpStream) -> Result<(), Box<dyn Error>> {
