@@ -5,6 +5,9 @@ use std::{
     error::{Error},
     path::{Path},
     fs,
+    collections::{HashMap},
+    env::{var},
+    sync::{OnceLock},
 };
 use base64::{Engine, engine::general_purpose::STANDARD};
 use serde::{Serialize, Deserialize};
@@ -15,9 +18,19 @@ const _LOGS_DIR: &str = "/var/log/gruct-logs";
 const GIT_KEYS_DIR: &str = "/var/lib/gruct/git-keys";
 // end
 
+// env variable
+static PASSWORD: OnceLock<String> = OnceLock::new();
+// end
+
 fn git_keys_file() -> String {
     format!("{}/git_keys.json", GIT_KEYS_DIR)
 }
+fn get_password() -> &'static str {
+    PASSWORD.get_or_init(|| {
+        var("PASSWORD_ENV").expect("PASSWORD_ENV must be set")
+    })
+}
+
 
 // enum
 #[derive(Serialize, Deserialize)]
@@ -40,7 +53,7 @@ struct Directory {
     children: Vec<FileNode>,
 }
 
-#[derive(Deserialize, Debug)]
+#[derive(Serialize, Deserialize, Debug)]
 struct GitKey {
     token: String,
     project: Option<String>,
@@ -101,9 +114,11 @@ fn handle_connection(stream: TcpStream) -> Result<(), Box<dyn Error>> {
         .split('&')
         .filter_map(|pair| pair.split_once("="))
         .collect();
+    
 
     // read the headers line by line until we get to a blank line
     let mut body_length = 0;
+    let mut headers = HashMap::new();
 
     loop {
         let mut line = String::new();
@@ -117,7 +132,13 @@ fn handle_connection(stream: TcpStream) -> Result<(), Box<dyn Error>> {
         if let Some(val) = line.to_lowercase().strip_prefix("content-length:") {
             body_length = val.trim().parse().unwrap_or(0);
         }
+        if let Some((key, value)) = line.split_once(": ") {
+            headers.insert(key.to_lowercase(), value.to_string());
+        }
     }
+
+    // get the password now
+    let passwd = headers.get("pwd").map(|s| s.as_str()).unwrap_or("");
 
     // read exact body length bytes for the body
     let mut body_bytes = vec![0u8; body_length];
@@ -145,6 +166,12 @@ fn handle_connection(stream: TcpStream) -> Result<(), Box<dyn Error>> {
                 return Ok(());
             }
         } else if segments.get(1) == Some(&"keys") {
+            if !passwd.is_empty() && passwd != get_password() {
+                let message = "Authentication failed";
+                send_back(message, &stream, 401);
+                return Ok(());
+            }
+
             let key_name = segments
                 .get(2)
                 .unwrap_or(&"");
@@ -154,8 +181,26 @@ fn handle_connection(stream: TcpStream) -> Result<(), Box<dyn Error>> {
                 send_back(message, &stream, 500);
                 return Ok(());
             }
+        } else if segments.get(1) == Some(&"getkeys") {
+            if !passwd.is_empty() && passwd != get_password() {
+                let message = "Authentication failed";
+                send_back(message, &stream, 401);
+                return Ok(());
+            }
+
+            if let Err(_e) = handle_get_all_keys(&stream) {
+                let message = "Failed to get all keys";
+                send_back(message, &stream, 500);
+                return Ok(());
+            }
         }
     } else if method == "PUT" {
+        if !passwd.is_empty() && passwd != get_password() {
+            let message = "Authentication failed";
+            send_back(message, &stream, 401);
+            return Ok(());
+        }
+
         // Pushing a file to a specific repo 
         let segments: Vec<&str> = path_without_query
             .splitn(3, '/')
@@ -173,6 +218,12 @@ fn handle_connection(stream: TcpStream) -> Result<(), Box<dyn Error>> {
             }
         }
     } else if method == "POST" {
+        if !passwd.is_empty() && passwd != get_password() {
+            let message = "Authentication failed";
+            send_back(message, &stream, 401);
+            return Ok(());
+        }
+
         // Making a new dir/repo
         if path_without_query == "/repo/new" {
            if let Err(_e) = handle_create_dir(params, &stream) {
@@ -196,6 +247,39 @@ fn handle_connection(stream: TcpStream) -> Result<(), Box<dyn Error>> {
 
     Ok(())
 }
+
+fn handle_get_all_keys(stream: &TcpStream) -> Result<(), Box<dyn Error>> {
+    let mut message: String = String::new();
+    let keys_file = git_keys_file();
+
+    let raw = fs::read_to_string(keys_file).expect("couldn't read file"); 
+    let keys: Vec<GitKey> = serde_json::from_str(&raw).expect("");
+
+    for key in keys {
+        message += &(key.project.as_deref().unwrap_or("").to_owned() + "\n");
+    }
+
+    send_back_keys(stream, 200, &message);
+    return Ok(());
+}
+
+fn send_back_keys(mut stream: &TcpStream, status_code: i32, keys: &str) {
+    let message = keys;
+    let message_len = message.len();
+
+    let status_text = match status_code {
+        200 => "OK",
+        201 => "Created",
+        404 => "Not Found",
+        500 => "Internal Server Error",
+        _ => "Unknown",
+    };
+
+    let resp = format!("HTTP/1.1 {status_code} {status_text}\r\nContent-Length: {message_len}\r\nContent-Type: text/plain\r\n\r\n{message}");
+
+    stream.write_all(resp.as_bytes()).expect("Failed to Write to client");  
+}
+
 
 fn handle_pull_git_keys(key_name: &str, stream: &TcpStream) -> Result<(), Box<dyn Error>> {
     let mut message = "";
