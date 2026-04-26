@@ -1,6 +1,6 @@
 use std::{
     // BufReader and prelude -> traits and types which let us read and write to stream
-    io::{BufReader, prelude::*},
+    io::{BufReader, BufWriter, Write, prelude::*},
     net::{TcpListener, TcpStream},
     error::{Error},
     path::{Path},
@@ -216,6 +216,16 @@ fn handle_connection(stream: TcpStream) -> Result<(), Box<dyn Error>> {
                 send_back(message, &stream, 500);
                 return Ok(());
             }
+        } else if segments.get(1) == Some(&"key") {
+            let key_name = segments
+                .get(2)
+                .unwrap_or(&"");
+
+            if let Err(_e) = handle_add_key(body.as_ref(), key_name, &stream) {
+                let message = "Failed to add key to list";
+                send_back(message, &stream, 500);
+                return Ok(());
+            }
         }
     } else if method == "POST" {
         if !passwd.is_empty() && passwd != get_password() {
@@ -231,7 +241,7 @@ fn handle_connection(stream: TcpStream) -> Result<(), Box<dyn Error>> {
                 send_back(message, &stream, 500);
                 return Ok(());
            }
-        }
+        } 
     }
 
     /*
@@ -248,12 +258,40 @@ fn handle_connection(stream: TcpStream) -> Result<(), Box<dyn Error>> {
     Ok(())
 }
 
+fn handle_add_key(key: &str, key_name: &str, stream: &TcpStream) -> Result<(), Box<dyn Error>> {
+    let mut message = "";
+    let keys_file = fs::File::create(&git_keys_file())?;
+
+    let mut keys: Vec<GitKey> = get_all_keys();
+    let mut already_key: bool = false;
+    let mut writer = BufWriter::new(keys_file);
+
+    for git_key in &keys {
+        if git_key.project == Some(key.to_string()) || git_key.token == key_name {
+            already_key = true;
+        }
+    }
+
+    if already_key == true {
+        message = "Key already exists";
+        send_back(message, &stream, 400);
+        return Ok(());
+    }
+
+    let new_key: GitKey = GitKey { token: key_name.to_string(), project: Some(key.to_string()) };
+
+    keys.push(new_key);
+
+    serde_json::to_writer(&mut writer, &keys)?;
+    writer.flush()?;
+
+    return Ok(());
+}
+
 fn handle_get_all_keys(stream: &TcpStream) -> Result<(), Box<dyn Error>> {
     let mut message: String = String::new();
-    let keys_file = git_keys_file();
 
-    let raw = fs::read_to_string(keys_file).expect("couldn't read file"); 
-    let keys: Vec<GitKey> = serde_json::from_str(&raw).expect("");
+    let keys: Vec<GitKey> = get_all_keys();
 
     for key in keys {
         message += &(key.project.as_deref().unwrap_or("").to_owned() + "\n");
@@ -261,6 +299,15 @@ fn handle_get_all_keys(stream: &TcpStream) -> Result<(), Box<dyn Error>> {
 
     send_back_keys(stream, 200, &message);
     return Ok(());
+}
+
+fn get_all_keys() -> Vec<GitKey> {
+    let keys_file = git_keys_file();
+
+    let raw = fs::read_to_string(keys_file).expect("couldn't read file"); 
+    let keys: Vec<GitKey> = serde_json::from_str(&raw).expect("");
+    
+    return keys;
 }
 
 fn send_back_keys(mut stream: &TcpStream, status_code: i32, keys: &str) {
