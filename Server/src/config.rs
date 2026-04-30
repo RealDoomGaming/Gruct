@@ -22,7 +22,7 @@ pub fn get_password() -> &'static str {
     })
 }
 pub fn compare_passwd(passwd: &str, stream: &TcpStream) -> Result<(), Box<dyn Error>> {
-    if !passwd.is_empty() && passwd != get_password() {
+    if passwd != get_password() {
         let message = "Authentication failed";
         send_back(message, &stream, 401);
         return Err("Authentication failed".into());
