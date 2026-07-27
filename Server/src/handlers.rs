@@ -1,10 +1,8 @@
 use base64::{Engine, engine::general_purpose::STANDARD};
 
 use crate::{
-    models::{GitKey},
-    response::{send_back, send_back_repo, send_back_key, send_back_keys},
-    storage::{git_keys_file, get_all_keys, folder_rec},
-    config::{REPOS_DIR, compare_passwd},
+    config::{REPOS_DIR, compare_passwd}, 
+    models::GitKey, response::{send_back, send_back_key, send_back_keys, send_back_repo}, storage::{folder_rec, get_all_keys, git_keys_file},
 };
 
 use std::{
@@ -17,12 +15,13 @@ use std::{
     io::Write,
 };
 
+use path_security::validate_path;
+
 pub fn handle_connection(stream: TcpStream) -> Result<(), Box<dyn Error>> {
     let mut buff_reader = BufReader::new(&stream);
     let mut request_line = String::new();
     buff_reader.read_line(&mut request_line)?;
-    let request_line = request_line.trim_end();
-        
+    let request_line = request_line.trim_end();        
 
     let method = request_line
         .split_whitespace()
@@ -46,6 +45,26 @@ pub fn handle_connection(stream: TcpStream) -> Result<(), Box<dyn Error>> {
         .filter_map(|pair| pair.split_once("="))
         .collect();
     
+
+    // before we do anything else we should check if the path we got doesnt contain ../.. or something like that
+    // we only want the user to be able to access the repo folder and nothing else
+    let relative_path = path_without_query.trim_start_matches('/');
+    let user_path = Path::new(relative_path);
+    let base_path = Path::new(REPOS_DIR);
+    let safe_path = match validate_path(user_path, base_path) {
+        Ok(safe_path) => safe_path,
+        Err(_) => {
+            let message = "Path blocked because path traversal was detected";
+            send_back(message, &stream, 403);
+            return Ok(());
+        }
+    };
+    // here we convert our PathBuffer to a &str because we expect a &str everywhere else
+    // and we use anyhow because rust converts any error you have into anyhow::Error when you use ?
+    let new_path = safe_path
+        .to_str()
+        .ok_or_else(|| anyhow::anyhow!("Path contains invalid UTF-8"))?;
+
 
     // read the headers line by line until we get to a blank line
     let mut body_length = 0;
@@ -133,7 +152,7 @@ pub fn handle_connection(stream: TcpStream) -> Result<(), Box<dyn Error>> {
         }
 
         // Pushing a file to a specific repo 
-        let segments: Vec<&str> = path_without_query
+        let segments: Vec<&str> = new_path
             .splitn(3, '/')
             .collect();
 
@@ -164,7 +183,7 @@ pub fn handle_connection(stream: TcpStream) -> Result<(), Box<dyn Error>> {
         } 
 
         // Making a new dir/repo
-        if path_without_query == "/repo/new" {
+        if new_path == "/repo/new" {
            if let Err(_e) = handle_create_dir(params, &stream) {
                 let message = "Failed to create dir/repo";
                 send_back(message, &stream, 500);
@@ -198,7 +217,7 @@ pub fn handle_get_all_repos(stream: &TcpStream) -> Result<(), Box<dyn Error>> {
 }
 
 pub fn handle_add_key(key: &str, key_name: &str, stream: &TcpStream) -> Result<(), Box<dyn Error>> {
-    let mut message = "";
+    let message;
     let keys_file = fs::File::create(&git_keys_file())?;
 
     let mut keys: Vec<GitKey> = get_all_keys();
@@ -240,10 +259,8 @@ pub fn handle_get_all_keys(stream: &TcpStream) -> Result<(), Box<dyn Error>> {
     return Ok(());
 }
 
-
-
 pub fn handle_pull_git_keys(key_name: &str, stream: &TcpStream) -> Result<(), Box<dyn Error>> {
-    let mut message = "";
+    let message;
 
     if key_name == "" {
         eprintln!("[pull] missing key name");
@@ -271,7 +288,7 @@ pub fn handle_pull_git_keys(key_name: &str, stream: &TcpStream) -> Result<(), Bo
 }
 
 pub fn handle_pull_repo(repo_name: &str, stream: &TcpStream) -> Result<(), Box<dyn Error>> {
-    let mut message = "";
+    let message;
 
     if repo_name == "" {
         eprintln!("[pull] missing repo name");
@@ -297,7 +314,7 @@ pub fn handle_pull_repo(repo_name: &str, stream: &TcpStream) -> Result<(), Box<d
 
 
 pub fn handle_update_file(file_contents: &str, file_name: &str, stream: &TcpStream, params: Vec<(&str, &str)>) -> Result<(), Box<dyn Error>> {
-   let mut message = "";
+   let message;
 
     if file_name == "" {
         eprintln!("[update] missing file name");
@@ -369,7 +386,7 @@ pub fn handle_update_file(file_contents: &str, file_name: &str, stream: &TcpStre
 }
 
 pub fn handle_create_dir(params: Vec<(&str, &str)>, stream: &TcpStream) -> Result<(), Box<dyn Error>> {
-    let mut message = "";
+    let message;
 
     if params.is_empty() {
         message = "Couldnt get the name the new dir/repo"; 

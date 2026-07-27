@@ -6,10 +6,18 @@ version = 4
 name = "Server"
 version = "0.1.0"
 dependencies = [
+ "anyhow",
  "base64",
+ "path-security",
  "serde",
  "serde_json",
 ]
+
+[[package]]
+name = "anyhow"
+version = "1.0.104"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "330a5ed07fa54e4702c9d6c4174f74427fc0ef6e214bbd677ae50a5099946470"
 
 [[package]]
 name = "base64"
@@ -28,6 +36,15 @@ name = "memchr"
 version = "2.8.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "f8ca58f447f06ed17d5fc4043ce1b10dd205e060fb3ce5b979b8ed8e59ff3f79"
+
+[[package]]
+name = "path-security"
+version = "0.2.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "82874a773db60c7c36782df468314e634ad34440df8cb72c36109cdfea02a4fd"
+dependencies = [
+ "anyhow",
+]
 
 [[package]]
 name = "proc-macro2"
